@@ -249,6 +249,12 @@ func extractImagesRegex(content, path string) []ImageInfo {
 	lines := strings.Split(content, "\n")
 
 	for lineNum, line := range lines {
+		// Skip comment lines
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
 		matches := imageRegex.FindAllStringSubmatch(line, -1)
 		for _, match := range matches {
 			if len(match) > 1 {
