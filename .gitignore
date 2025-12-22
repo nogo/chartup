@@ -1,0 +1,19 @@
+# Binary
+chartup
+chartup.exe
+
+# Cache file
+.chartup-cache.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage.out
