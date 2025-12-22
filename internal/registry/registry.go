@@ -42,6 +42,12 @@ func (c *Client) GetLatestTag(registry, repository, currentTag string) (*TagInfo
 		return c.getDockerHubTags(repository, currentTag)
 	case strings.Contains(registry, "quay.io"):
 		return c.getQuayTags(repository, currentTag)
+	case strings.Contains(registry, "ghcr.io"):
+		return c.getOCITags("ghcr.io", repository, currentTag)
+	case strings.Contains(registry, "gcr.io"):
+		return c.getOCITags("gcr.io", repository, currentTag)
+	case strings.Contains(registry, "registry.k8s.io"):
+		return c.getOCITags("registry.k8s.io", repository, currentTag)
 	default:
 		return nil, fmt.Errorf("unsupported registry: %s", registry)
 	}
@@ -147,6 +153,110 @@ func (c *Client) getQuayTags(repository, currentTag string) (*TagInfo, error) {
 		Latest:  latest,
 		AllTags: tags,
 	}, nil
+}
+
+// OCI Registry API response structures (used by ghcr.io, gcr.io, registry.k8s.io)
+type ociTokenResponse struct {
+	Token string `json:"token"`
+}
+
+type ociTagsResponse struct {
+	Tags []string `json:"tags"`
+}
+
+func (c *Client) getOCITags(registry, repository, currentTag string) (*TagInfo, error) {
+	// Step 1: Get anonymous token
+	token, err := c.getOCIToken(registry, repository)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 2: List tags using the token
+	url := fmt.Sprintf("https://%s/v2/%s/tags/list", registry, repository)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 429 {
+		return nil, ErrRateLimit
+	}
+
+	if resp.StatusCode == 401 {
+		return nil, fmt.Errorf("%s requires authentication", registry)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("%s API returned status %d", registry, resp.StatusCode)
+	}
+
+	var tagsResp ociTagsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tagsResp); err != nil {
+		return nil, err
+	}
+
+	latest := findLatestTag(tagsResp.Tags, currentTag)
+
+	return &TagInfo{
+		Name:    repository,
+		Latest:  latest,
+		AllTags: tagsResp.Tags,
+	}, nil
+}
+
+func (c *Client) getOCIToken(registry, repository string) (string, error) {
+	// Different registries have different token endpoints
+	var tokenURL string
+
+	switch registry {
+	case "ghcr.io":
+		tokenURL = fmt.Sprintf("https://ghcr.io/token?scope=repository:%s:pull", repository)
+	case "gcr.io":
+		tokenURL = fmt.Sprintf("https://gcr.io/v2/token?scope=repository:%s:pull", repository)
+	case "registry.k8s.io":
+		// registry.k8s.io may not require a token for public images, try without
+		return "", nil
+	default:
+		return "", nil
+	}
+
+	req, err := http.NewRequest("GET", tokenURL, nil)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 429 {
+		return "", ErrRateLimit
+	}
+
+	if resp.StatusCode != 200 {
+		// Token endpoint failed, try without token
+		return "", nil
+	}
+
+	var tokenResp ociTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return "", nil // Ignore decode errors, try without token
+	}
+
+	return tokenResp.Token, nil
 }
 
 // semverRegex matches semantic version patterns
