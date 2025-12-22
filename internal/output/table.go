@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -29,13 +30,29 @@ func PrintTable(results *checker.Results) {
 }
 
 func printImagesTable(images []checker.ImageResult) {
+	if len(images) == 0 {
+		fmt.Println("No Docker images found.")
+		return
+	}
+
+	// Sort by file path, then by line number
+	sorted := make([]checker.ImageResult, len(images))
+	copy(sorted, images)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Path != sorted[j].Path {
+			return sorted[i].Path < sorted[j].Path
+		}
+		return sorted[i].Line < sorted[j].Line
+	})
+
 	t := table.NewWriter()
 	t.SetOutputMirror(os.Stdout)
 	t.SetTitle("DOCKER IMAGES")
 
-	t.AppendHeader(table.Row{"Repository", "Current", "Latest", "Status", "File"})
+	t.AppendHeader(table.Row{"Repository", "Current", "Latest", "Status", "Line", "File"})
 
-	for _, img := range images {
+	lastFile := ""
+	for _, img := range sorted {
 		repo := img.Repository
 		if img.Registry != "docker.io" && img.Registry != "" {
 			repo = img.Registry + "/" + img.Repository
@@ -47,37 +64,65 @@ func printImagesTable(images []checker.ImageResult) {
 		}
 
 		status := formatStatus(img.Status)
-		location := formatLocation(img.Path, img.Line)
+		relPath := relativePath(img.Path)
 
-		t.AppendRow(table.Row{repo, img.Current, latest, status, location})
+		// Show file path only for first row in group, add separator between groups
+		fileDisplay := ""
+		if relPath != lastFile {
+			if lastFile != "" {
+				t.AppendSeparator()
+			}
+			fileDisplay = relPath
+			lastFile = relPath
+		}
+
+		// Format line number
+		lineStr := ""
+		if img.Line > 0 {
+			lineStr = fmt.Sprintf("%d", img.Line)
+		}
+
+		t.AppendRow(table.Row{repo, img.Current, latest, status, lineStr, fileDisplay})
 	}
 
 	t.SetColumnConfigs([]table.ColumnConfig{
-		{Number: 1, WidthMax: 45, WidthMaxEnforcer: text.WrapSoft},
-		{Number: 2, WidthMax: 25, WidthMaxEnforcer: text.WrapSoft},
-		{Number: 3, WidthMax: 25, WidthMaxEnforcer: text.WrapSoft},
+		{Number: 1, WidthMax: 40, WidthMaxEnforcer: text.WrapSoft},
+		{Number: 2, WidthMax: 20, WidthMaxEnforcer: text.WrapSoft},
+		{Number: 3, WidthMax: 20, WidthMaxEnforcer: text.WrapSoft},
 		{Number: 4, Align: text.AlignCenter},
-		{Number: 5, WidthMax: 50, WidthMaxEnforcer: text.WrapSoft},
+		{Number: 5, Align: text.AlignRight},
+		{Number: 6, WidthMax: 55, WidthMaxEnforcer: text.WrapSoft},
 	})
 
 	t.SetStyle(table.StyleRounded)
 	t.Style().Title.Align = text.AlignCenter
-
-	if len(images) == 0 {
-		fmt.Println("No Docker images found.")
-	} else {
-		t.Render()
-	}
+	t.Render()
 }
 
 func printChartsTable(charts []checker.ChartResult) {
+	if len(charts) == 0 {
+		fmt.Println("No Helm charts found.")
+		return
+	}
+
+	// Sort by file path, then by line number
+	sorted := make([]checker.ChartResult, len(charts))
+	copy(sorted, charts)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Path != sorted[j].Path {
+			return sorted[i].Path < sorted[j].Path
+		}
+		return sorted[i].Line < sorted[j].Line
+	})
+
 	t := table.NewWriter()
 	t.SetOutputMirror(os.Stdout)
 	t.SetTitle("HELM CHARTS")
 
 	t.AppendHeader(table.Row{"Chart", "Upstream", "Current", "Latest", "Status", "File"})
 
-	for _, chart := range charts {
+	lastFile := ""
+	for _, chart := range sorted {
 		upstream := chart.Upstream
 		if upstream == "" {
 			upstream = "(local)"
@@ -89,9 +134,19 @@ func printChartsTable(charts []checker.ChartResult) {
 		}
 
 		status := formatStatus(chart.Status)
-		location := formatLocation(chart.Path, chart.Line)
+		relPath := relativePath(chart.Path)
 
-		t.AppendRow(table.Row{chart.Name, upstream, chart.Current, latest, status, location})
+		// Show file path only for first row in group, add separator between groups
+		fileDisplay := ""
+		if relPath != lastFile {
+			if lastFile != "" {
+				t.AppendSeparator()
+			}
+			fileDisplay = relPath
+			lastFile = relPath
+		}
+
+		t.AppendRow(table.Row{chart.Name, upstream, chart.Current, latest, status, fileDisplay})
 	}
 
 	t.SetColumnConfigs([]table.ColumnConfig{
@@ -100,17 +155,12 @@ func printChartsTable(charts []checker.ChartResult) {
 		{Number: 3, WidthMax: 15},
 		{Number: 4, WidthMax: 15},
 		{Number: 5, Align: text.AlignCenter},
-		{Number: 6, WidthMax: 50, WidthMaxEnforcer: text.WrapSoft},
+		{Number: 6, WidthMax: 55, WidthMaxEnforcer: text.WrapSoft},
 	})
 
 	t.SetStyle(table.StyleRounded)
 	t.Style().Title.Align = text.AlignCenter
-
-	if len(charts) == 0 {
-		fmt.Println("No Helm charts found.")
-	} else {
-		t.Render()
-	}
+	t.Render()
 }
 
 func formatStatus(status checker.Status) string {
@@ -128,7 +178,7 @@ func formatStatus(status checker.Status) string {
 	}
 }
 
-func formatLocation(path string, line int) string {
+func relativePath(path string) string {
 	if path == "" {
 		return "-"
 	}
@@ -151,11 +201,6 @@ func formatLocation(path string, line int) string {
 				relPath = "~" + strings.TrimPrefix(path, home)
 			}
 		}
-	}
-
-	// Append line number if known
-	if line > 0 {
-		return fmt.Sprintf("%s:%d", relPath, line)
 	}
 
 	return relPath
