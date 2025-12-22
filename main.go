@@ -20,6 +20,7 @@ var (
 func main() {
 	noCache := flag.Bool("no-cache", false, "Ignore cached results")
 	cacheTTL := flag.Duration("cache-ttl", 1*time.Hour, "Cache validity duration (e.g., 1h, 30m, 24h)")
+	editor := flag.String("editor", "", "Editor for file links: vscode, cursor, idea, sublime, zed, none (auto-detects from $EDITOR)")
 	showVersion := flag.Bool("version", false, "Show version")
 	flag.Parse()
 
@@ -86,6 +87,11 @@ func main() {
 	absDir, err := filepath.Abs(dir)
 	if err == nil {
 		output.SetBaseDir(absDir)
+	}
+
+	// Set editor for file links
+	if *editor != "" {
+		output.SetEditor(*editor)
 	}
 
 	// Output results
