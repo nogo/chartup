@@ -184,6 +184,9 @@ func printImagesTables(images []checker.ImageResult) {
 		latest := img.Latest
 		if img.Skipped {
 			latest = "-"
+		} else if latest != "" {
+			// Add clickable link to registry
+			latest = formatImageLatestLink(img.Registry, img.Repository, latest)
 		}
 
 		// Format location as relative/path:line with clickable link
@@ -269,6 +272,9 @@ func printChartsTables(charts []checker.ChartResult) {
 		latest := chart.Latest
 		if chart.Status == checker.StatusSkipped {
 			latest = "-"
+		} else if latest != "" {
+			// Add clickable link to ArtifactHub
+			latest = formatChartLatestLink(chart.Name, chart.Upstream, latest)
 		}
 
 		// Format location as relative/path:line with clickable link
@@ -323,6 +329,63 @@ func formatLineLink(path string, line int) string {
 	}
 
 	return lineStr
+}
+
+// formatImageLatestLink creates a clickable link to the registry page for the tag
+func formatImageLatestLink(registry, repository, tag string) string {
+	if tag == "" || tag == "-" {
+		return tag
+	}
+
+	var url string
+	switch {
+	case registry == "docker.io" || registry == "":
+		// Docker Hub
+		if strings.Contains(repository, "/") {
+			url = fmt.Sprintf("https://hub.docker.com/r/%s/tags?name=%s", repository, tag)
+		} else {
+			// Official images
+			url = fmt.Sprintf("https://hub.docker.com/_/%s/tags?name=%s", repository, tag)
+		}
+	case strings.Contains(registry, "quay.io"):
+		url = fmt.Sprintf("https://quay.io/repository/%s?tab=tags&tag=%s", repository, tag)
+	case strings.Contains(registry, "ghcr.io"):
+		// GitHub Container Registry - link to package versions
+		url = fmt.Sprintf("https://github.com/%s/pkgs/container/%s",
+			strings.Split(repository, "/")[0],
+			strings.Split(repository, "/")[len(strings.Split(repository, "/"))-1])
+	case strings.Contains(registry, "gcr.io"):
+		// GCR doesn't have a nice web UI for tags
+		return tag
+	case strings.Contains(registry, "registry.k8s.io"):
+		// k8s registry doesn't have a web UI
+		return tag
+	default:
+		return tag
+	}
+
+	// OSC 8 hyperlink format
+	return fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", url, tag)
+}
+
+// formatChartLatestLink creates a clickable link to ArtifactHub for the chart version
+func formatChartLatestLink(name, upstream, version string) string {
+	if version == "" || version == "-" {
+		return version
+	}
+
+	var url string
+	switch upstream {
+	case "bitnami":
+		url = fmt.Sprintf("https://artifacthub.io/packages/helm/bitnami/%s/%s", name, version)
+	case "trinodb":
+		url = fmt.Sprintf("https://artifacthub.io/packages/helm/trino/%s/%s", name, version)
+	default:
+		return version
+	}
+
+	// OSC 8 hyperlink format
+	return fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", url, version)
 }
 
 func formatLocationLink(path string, line int) string {
