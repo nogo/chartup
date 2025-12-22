@@ -1,10 +1,8 @@
 package scanner
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -173,99 +171,80 @@ func parseValuesYAML(path string) ([]ImageInfo, error) {
 		return nil, err
 	}
 
-	var values map[string]interface{}
-	if err := yaml.Unmarshal(data, &values); err != nil {
+	// Use yaml.Node to preserve line numbers
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
 		return nil, err
 	}
 
 	images := []ImageInfo{}
 
-	// Extract images recursively from the YAML structure
-	extractImages(values, path, &images)
-
-	// Also try regex extraction for image strings (has line numbers)
-	regexImages := extractImagesRegex(string(data), path)
-	for _, img := range regexImages {
-		found := false
-		for i, existing := range images {
-			if existing.FullImage == img.FullImage {
-				found = true
-				// Use regex line number if YAML parse didn't have one
-				if existing.Line == 0 && img.Line > 0 {
-					images[i].Line = img.Line
-				}
-				break
-			}
-		}
-		if !found {
-			images = append(images, img)
-		}
+	// Extract images from YAML nodes (preserves line numbers)
+	if len(root.Content) > 0 {
+		extractImagesFromNode(root.Content[0], path, &images)
 	}
 
 	return images, nil
 }
 
-func extractImages(data interface{}, path string, images *[]ImageInfo) {
-	switch v := data.(type) {
-	case map[string]interface{}:
-		// Check for common image patterns
-		if repo, ok := v["repository"].(string); ok {
-			tag := "latest"
-			if t, ok := v["tag"].(string); ok {
-				tag = t
-			} else if t, ok := v["tag"].(int); ok {
-				tag = fmt.Sprintf("%d", t)
-			}
-			img := parseImageString(repo+":"+tag, path, 0) // Line unknown from YAML parse
-			if img != nil {
-				*images = append(*images, *img)
-			}
-		}
-
-		// Check for "image" key with string value
-		if imgStr, ok := v["image"].(string); ok {
-			img := parseImageString(imgStr, path, 0) // Line unknown from YAML parse
-			if img != nil {
-				*images = append(*images, *img)
-			}
-		}
-
-		// Recurse into nested maps
-		for _, val := range v {
-			extractImages(val, path, images)
-		}
-
-	case []interface{}:
-		for _, item := range v {
-			extractImages(item, path, images)
-		}
+// extractImagesFromNode extracts images from yaml.Node tree, preserving line numbers
+func extractImagesFromNode(node *yaml.Node, path string, images *[]ImageInfo) {
+	if node == nil {
+		return
 	}
-}
 
-var imageRegex = regexp.MustCompile(`(?:image:\s*["']?|repository:\s*["']?)([a-zA-Z0-9._/-]+(?::[a-zA-Z0-9._-]+)?)["']?`)
+	switch node.Kind {
+	case yaml.MappingNode:
+		// Process key-value pairs
+		for i := 0; i < len(node.Content)-1; i += 2 {
+			keyNode := node.Content[i]
+			valueNode := node.Content[i+1]
 
-func extractImagesRegex(content, path string) []ImageInfo {
-	images := []ImageInfo{}
-	lines := strings.Split(content, "\n")
+			// Check for repository/tag pattern
+			if keyNode.Value == "repository" && valueNode.Kind == yaml.ScalarNode {
+				repo := valueNode.Value
+				tag := "latest"
+				line := valueNode.Line
 
-	for lineNum, line := range lines {
-		// Skip comment lines
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "#") {
-			continue
-		}
+				// Look for sibling "tag" key
+				for j := 0; j < len(node.Content)-1; j += 2 {
+					if node.Content[j].Value == "tag" {
+						tagNode := node.Content[j+1]
+						if tagNode.Kind == yaml.ScalarNode && tagNode.Value != "" {
+							tag = tagNode.Value
+						}
+						break
+					}
+				}
 
-		matches := imageRegex.FindAllStringSubmatch(line, -1)
-		for _, match := range matches {
-			if len(match) > 1 {
-				img := parseImageString(match[1], path, lineNum+1) // 1-indexed
+				img := parseImageString(repo+":"+tag, path, line)
 				if img != nil {
-					images = append(images, *img)
+					*images = append(*images, *img)
 				}
 			}
+
+			// Check for "image" key with string value
+			if keyNode.Value == "image" && valueNode.Kind == yaml.ScalarNode {
+				img := parseImageString(valueNode.Value, path, valueNode.Line)
+				if img != nil {
+					*images = append(*images, *img)
+				}
+			}
+
+			// Recurse into value nodes
+			extractImagesFromNode(valueNode, path, images)
+		}
+
+	case yaml.SequenceNode:
+		for _, item := range node.Content {
+			extractImagesFromNode(item, path, images)
+		}
+
+	case yaml.DocumentNode:
+		for _, item := range node.Content {
+			extractImagesFromNode(item, path, images)
 		}
 	}
-	return images
 }
 
 func parseImageString(imageStr, path string, line int) *ImageInfo {
