@@ -13,16 +13,49 @@ import (
 	"github.com/nogo/chartup/internal/scanner"
 )
 
-var (
-	version = "dev"
-)
+var version = "dev"
+
+func printUsage() {
+	fmt.Fprintf(os.Stderr, `chartup - Check Helm charts and Docker images for updates
+
+Usage:
+  chartup [options] [directory]
+
+Options:
+  --no-cache          Ignore cached results
+  --cache-ttl <dur>   Cache validity duration (default: 1h)
+  --editor <name>     Editor for clickable links (default: auto-detect)
+                      Options: vscode, cursor, idea, sublime, zed, none
+  --version           Show version
+  --help              Show this help
+
+Examples:
+  chartup .                      Scan current directory
+  chartup /path/to/charts        Scan specific directory
+  chartup --no-cache .           Force fresh lookups
+  chartup --cache-ttl 24h .      Cache results for 24 hours
+  chartup --editor idea .        Use IntelliJ IDEA for links
+
+Supported registries:
+  Docker Hub, Quay.io, ghcr.io, gcr.io, registry.k8s.io
+
+`)
+}
 
 func main() {
-	noCache := flag.Bool("no-cache", false, "Ignore cached results")
-	cacheTTL := flag.Duration("cache-ttl", 1*time.Hour, "Cache validity duration (e.g., 1h, 30m, 24h)")
-	editor := flag.String("editor", "", "Editor for file links: vscode, cursor, idea, sublime, zed, none (auto-detects from $EDITOR)")
-	showVersion := flag.Bool("version", false, "Show version")
+	flag.Usage = printUsage
+
+	noCache := flag.Bool("no-cache", false, "")
+	cacheTTL := flag.Duration("cache-ttl", 1*time.Hour, "")
+	editor := flag.String("editor", "", "")
+	showVersion := flag.Bool("version", false, "")
+	showHelp := flag.Bool("help", false, "")
 	flag.Parse()
+
+	if *showHelp {
+		printUsage()
+		os.Exit(0)
+	}
 
 	if *showVersion {
 		fmt.Printf("chartup %s\n", version)
