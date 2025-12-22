@@ -2,109 +2,115 @@ package output
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/nogo/chartup/internal/checker"
 )
 
-// PrintTable prints the results as a plain text table
-func PrintTable(results *checker.Results) {
-	// Print Docker Images section
-	fmt.Println("DOCKER IMAGES")
-	fmt.Println(strings.Repeat("=", 80))
+// baseDir is used to make paths relative
+var baseDir string
 
-	if len(results.Images) == 0 {
+// SetBaseDir sets the base directory for relative path display
+func SetBaseDir(dir string) {
+	baseDir = dir
+}
+
+// PrintTable prints the results as formatted tables using go-pretty
+func PrintTable(results *checker.Results) {
+	printImagesTable(results.Images)
+	fmt.Println()
+	printChartsTable(results.Charts)
+	fmt.Println()
+	printSummary(results)
+}
+
+func printImagesTable(images []checker.ImageResult) {
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	t.SetTitle("DOCKER IMAGES")
+
+	t.AppendHeader(table.Row{"Repository", "Current", "Latest", "Status", "File"})
+
+	for _, img := range images {
+		repo := img.Repository
+		if img.Registry != "docker.io" && img.Registry != "" {
+			repo = img.Registry + "/" + img.Repository
+		}
+
+		latest := img.Latest
+		if img.Skipped {
+			latest = "-"
+		}
+
+		status := formatStatus(img.Status)
+		location := formatLocation(img.Path, img.Line)
+
+		t.AppendRow(table.Row{repo, img.Current, latest, status, location})
+	}
+
+	t.SetColumnConfigs([]table.ColumnConfig{
+		{Number: 1, WidthMax: 45, WidthMaxEnforcer: text.WrapSoft},
+		{Number: 2, WidthMax: 25, WidthMaxEnforcer: text.WrapSoft},
+		{Number: 3, WidthMax: 25, WidthMaxEnforcer: text.WrapSoft},
+		{Number: 4, Align: text.AlignCenter},
+		{Number: 5, WidthMax: 50, WidthMaxEnforcer: text.WrapSoft},
+	})
+
+	t.SetStyle(table.StyleRounded)
+	t.Style().Title.Align = text.AlignCenter
+
+	if len(images) == 0 {
 		fmt.Println("No Docker images found.")
 	} else {
-		// Calculate column widths
-		repoWidth := 40
-		tagWidth := 25
-		latestWidth := 25
-		statusWidth := 10
+		t.Render()
+	}
+}
 
-		// Header
-		fmt.Printf("%-*s %-*s %-*s %-*s\n",
-			repoWidth, "Repository",
-			tagWidth, "Current",
-			latestWidth, "Latest",
-			statusWidth, "Status")
-		fmt.Println(strings.Repeat("-", 80))
+func printChartsTable(charts []checker.ChartResult) {
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	t.SetTitle("HELM CHARTS")
 
-		// Rows
-		for _, img := range results.Images {
-			repo := img.Repository
-			if img.Registry != "docker.io" && img.Registry != "" {
-				repo = img.Registry + "/" + img.Repository
-			}
+	t.AppendHeader(table.Row{"Chart", "Upstream", "Current", "Latest", "Status", "File"})
 
-			current := truncate(img.Current, tagWidth-1)
-			latest := truncate(img.Latest, latestWidth-1)
-			if img.Skipped {
-				latest = "-"
-			}
-
-			status := formatStatus(img.Status)
-
-			fmt.Printf("%-*s %-*s %-*s %s\n",
-				repoWidth, truncate(repo, repoWidth-1),
-				tagWidth, current,
-				latestWidth, latest,
-				status)
+	for _, chart := range charts {
+		upstream := chart.Upstream
+		if upstream == "" {
+			upstream = "(local)"
 		}
+
+		latest := chart.Latest
+		if chart.Status == checker.StatusSkipped {
+			latest = "-"
+		}
+
+		status := formatStatus(chart.Status)
+		location := formatLocation(chart.Path, chart.Line)
+
+		t.AppendRow(table.Row{chart.Name, upstream, chart.Current, latest, status, location})
 	}
 
-	fmt.Println()
+	t.SetColumnConfigs([]table.ColumnConfig{
+		{Number: 1, WidthMax: 25},
+		{Number: 2, WidthMax: 15},
+		{Number: 3, WidthMax: 15},
+		{Number: 4, WidthMax: 15},
+		{Number: 5, Align: text.AlignCenter},
+		{Number: 6, WidthMax: 50, WidthMaxEnforcer: text.WrapSoft},
+	})
 
-	// Print Helm Charts section
-	fmt.Println("HELM CHARTS")
-	fmt.Println(strings.Repeat("=", 80))
+	t.SetStyle(table.StyleRounded)
+	t.Style().Title.Align = text.AlignCenter
 
-	if len(results.Charts) == 0 {
+	if len(charts) == 0 {
 		fmt.Println("No Helm charts found.")
 	} else {
-		// Calculate column widths
-		nameWidth := 30
-		upstreamWidth := 15
-		currentWidth := 15
-		latestWidth := 15
-		statusWidth := 10
-
-		// Header
-		fmt.Printf("%-*s %-*s %-*s %-*s %-*s\n",
-			nameWidth, "Chart",
-			upstreamWidth, "Upstream",
-			currentWidth, "Current",
-			latestWidth, "Latest",
-			statusWidth, "Status")
-		fmt.Println(strings.Repeat("-", 80))
-
-		// Rows
-		for _, chart := range results.Charts {
-			upstream := chart.Upstream
-			if upstream == "" {
-				upstream = "(local)"
-			}
-
-			latest := chart.Latest
-			if chart.Status == checker.StatusSkipped {
-				latest = "-"
-			}
-
-			status := formatStatus(chart.Status)
-
-			fmt.Printf("%-*s %-*s %-*s %-*s %s\n",
-				nameWidth, truncate(chart.Name, nameWidth-1),
-				upstreamWidth, truncate(upstream, upstreamWidth-1),
-				currentWidth, truncate(chart.Current, currentWidth-1),
-				latestWidth, truncate(latest, latestWidth-1),
-				status)
-		}
+		t.Render()
 	}
-
-	fmt.Println()
-
-	// Print summary
-	printSummary(results)
 }
 
 func formatStatus(status checker.Status) string {
@@ -122,14 +128,37 @@ func formatStatus(status checker.Status) string {
 	}
 }
 
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
+func formatLocation(path string, line int) string {
+	if path == "" {
+		return "-"
 	}
-	if maxLen <= 3 {
-		return s[:maxLen]
+
+	relPath := path
+
+	if baseDir != "" {
+		if rel, err := filepath.Rel(baseDir, path); err == nil {
+			// Only use relative path if it doesn't start with ".."
+			if !strings.HasPrefix(rel, "..") {
+				relPath = rel
+			}
+		}
 	}
-	return s[:maxLen-3] + "..."
+
+	// Shorten home directory if not already relative
+	if relPath == path {
+		if home, err := os.UserHomeDir(); err == nil {
+			if strings.HasPrefix(path, home) {
+				relPath = "~" + strings.TrimPrefix(path, home)
+			}
+		}
+	}
+
+	// Append line number if known
+	if line > 0 {
+		return fmt.Sprintf("%s:%d", relPath, line)
+	}
+
+	return relPath
 }
 
 func printSummary(results *checker.Results) {
@@ -161,12 +190,18 @@ func printSummary(results *checker.Results) {
 		}
 	}
 
-	fmt.Println("SUMMARY")
-	fmt.Println(strings.Repeat("=", 80))
-	fmt.Printf("Updates available: %d\n", updates)
-	fmt.Printf("Up to date:        %d\n", upToDate)
-	fmt.Printf("Skipped:           %d\n", skipped)
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	t.SetTitle("SUMMARY")
+
+	t.AppendRow(table.Row{"Updates available", updates})
+	t.AppendRow(table.Row{"Up to date", upToDate})
+	t.AppendRow(table.Row{"Skipped", skipped})
 	if errors > 0 {
-		fmt.Printf("Errors:            %d\n", errors)
+		t.AppendRow(table.Row{"Errors", errors})
 	}
+
+	t.SetStyle(table.StyleRounded)
+	t.Style().Title.Align = text.AlignCenter
+	t.Render()
 }

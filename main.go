@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/nogo/chartup/internal/cache"
@@ -79,6 +80,12 @@ func main() {
 	// Save cache
 	if err := c.Save(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not save cache: %v\n", err)
+	}
+
+	// Set base directory for relative path display
+	absDir, err := filepath.Abs(dir)
+	if err == nil {
+		output.SetBaseDir(absDir)
 	}
 
 	// Output results

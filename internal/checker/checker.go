@@ -24,6 +24,8 @@ type ImageResult struct {
 	Status     Status
 	Skipped    bool
 	Error      string
+	Path       string // File where this image was found
+	Line       int    // Line number in file (0 if unknown)
 }
 
 // ChartResult holds the result of a chart version check
@@ -34,6 +36,8 @@ type ChartResult struct {
 	Upstream string
 	Status   Status
 	Error    string
+	Path     string // File where this chart was found
+	Line     int    // Line number in file (0 if unknown)
 }
 
 // Status represents the update status
@@ -99,6 +103,8 @@ func (c *Checker) CheckAll(scan *scanner.ScanResults) (*Results, error) {
 				Current:    img.Tag,
 				Status:     StatusError,
 				Error:      "rate limit hit",
+				Path:       img.Path,
+				Line:       img.Line,
 			})
 			continue
 		}
@@ -120,6 +126,8 @@ func (c *Checker) CheckAll(scan *scanner.ScanResults) (*Results, error) {
 				Upstream: chart.Upstream,
 				Status:   StatusError,
 				Error:    "rate limit hit",
+				Path:     chart.Path,
+				Line:     chart.Line,
 			})
 			continue
 		}
@@ -144,6 +152,8 @@ func (c *Checker) checkImage(img scanner.ImageInfo) ImageResult {
 		Repository: img.Repository,
 		Registry:   img.Registry,
 		Current:    img.Tag,
+		Path:       img.Path,
+		Line:       img.Line,
 	}
 
 	if img.Skipped {
@@ -186,6 +196,8 @@ func (c *Checker) checkChart(chart scanner.ChartInfo) ChartResult {
 		Name:     chart.Name,
 		Current:  chart.Version,
 		Upstream: chart.Upstream,
+		Path:     chart.Path,
+		Line:     chart.Line,
 	}
 
 	// Skip charts without known upstreams

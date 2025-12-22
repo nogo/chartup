@@ -83,7 +83,7 @@ func TestParseImageString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseImageString(tt.input, "/test/path")
+			result := parseImageString(tt.input, "/test/path", 42)
 
 			if tt.wantNil {
 				if result != nil {

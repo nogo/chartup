@@ -16,6 +16,7 @@ type ChartInfo struct {
 	Version    string
 	AppVersion string
 	Path       string
+	Line       int    // Line number in file
 	Upstream   string // Known upstream source (e.g., "bitnami", "trinodb")
 }
 
@@ -26,6 +27,7 @@ type ImageInfo struct {
 	Tag        string // e.g., "410"
 	FullImage  string // Original full image string
 	Path       string // File where it was found
+	Line       int    // Line number in file
 	Skipped    bool   // True for images we don't check (e.g., thinkportgmbh)
 }
 
@@ -181,13 +183,17 @@ func parseValuesYAML(path string) ([]ImageInfo, error) {
 	// Extract images recursively from the YAML structure
 	extractImages(values, path, &images)
 
-	// Also try regex extraction for image strings
+	// Also try regex extraction for image strings (has line numbers)
 	regexImages := extractImagesRegex(string(data), path)
 	for _, img := range regexImages {
 		found := false
-		for _, existing := range images {
+		for i, existing := range images {
 			if existing.FullImage == img.FullImage {
 				found = true
+				// Use regex line number if YAML parse didn't have one
+				if existing.Line == 0 && img.Line > 0 {
+					images[i].Line = img.Line
+				}
 				break
 			}
 		}
@@ -210,7 +216,7 @@ func extractImages(data interface{}, path string, images *[]ImageInfo) {
 			} else if t, ok := v["tag"].(int); ok {
 				tag = fmt.Sprintf("%d", t)
 			}
-			img := parseImageString(repo+":"+tag, path)
+			img := parseImageString(repo+":"+tag, path, 0) // Line unknown from YAML parse
 			if img != nil {
 				*images = append(*images, *img)
 			}
@@ -218,7 +224,7 @@ func extractImages(data interface{}, path string, images *[]ImageInfo) {
 
 		// Check for "image" key with string value
 		if imgStr, ok := v["image"].(string); ok {
-			img := parseImageString(imgStr, path)
+			img := parseImageString(imgStr, path, 0) // Line unknown from YAML parse
 			if img != nil {
 				*images = append(*images, *img)
 			}
@@ -240,19 +246,23 @@ var imageRegex = regexp.MustCompile(`(?:image:\s*["']?|repository:\s*["']?)([a-z
 
 func extractImagesRegex(content, path string) []ImageInfo {
 	images := []ImageInfo{}
-	matches := imageRegex.FindAllStringSubmatch(content, -1)
-	for _, match := range matches {
-		if len(match) > 1 {
-			img := parseImageString(match[1], path)
-			if img != nil {
-				images = append(images, *img)
+	lines := strings.Split(content, "\n")
+
+	for lineNum, line := range lines {
+		matches := imageRegex.FindAllStringSubmatch(line, -1)
+		for _, match := range matches {
+			if len(match) > 1 {
+				img := parseImageString(match[1], path, lineNum+1) // 1-indexed
+				if img != nil {
+					images = append(images, *img)
+				}
 			}
 		}
 	}
 	return images
 }
 
-func parseImageString(imageStr, path string) *ImageInfo {
+func parseImageString(imageStr, path string, line int) *ImageInfo {
 	imageStr = strings.TrimSpace(imageStr)
 	if imageStr == "" || imageStr == "latest" {
 		return nil
@@ -269,6 +279,7 @@ func parseImageString(imageStr, path string) *ImageInfo {
 	img := &ImageInfo{
 		FullImage: imageStr,
 		Path:      path,
+		Line:      line,
 		Registry:  "docker.io",
 	}
 
