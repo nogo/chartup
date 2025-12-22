@@ -8,10 +8,10 @@ import (
 
 // Cache handles JSON-based caching for version lookups
 type Cache struct {
-	filename string
-	ttl      time.Duration
-	disabled bool
-	data     CacheData
+	filename  string
+	ttl       time.Duration
+	skipReads bool // When true, ignore cached data but still write fresh results
+	data      CacheData
 }
 
 // CacheData represents the cache file structure
@@ -28,11 +28,12 @@ type CacheEntry struct {
 }
 
 // New creates a new cache instance
-func New(filename string, ttl time.Duration, disabled bool) *Cache {
+// When skipReads is true, cached data is ignored but fresh results are still saved
+func New(filename string, ttl time.Duration, skipReads bool) *Cache {
 	return &Cache{
-		filename: filename,
-		ttl:      ttl,
-		disabled: disabled,
+		filename:  filename,
+		ttl:       ttl,
+		skipReads: skipReads,
 		data: CacheData{
 			Images: make(map[string]CacheEntry),
 			Charts: make(map[string]CacheEntry),
@@ -42,10 +43,6 @@ func New(filename string, ttl time.Duration, disabled bool) *Cache {
 
 // Load reads the cache from disk
 func (c *Cache) Load() error {
-	if c.disabled {
-		return nil
-	}
-
 	data, err := os.ReadFile(c.filename)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -59,10 +56,6 @@ func (c *Cache) Load() error {
 
 // Save writes the cache to disk
 func (c *Cache) Save() error {
-	if c.disabled {
-		return nil
-	}
-
 	data, err := json.MarshalIndent(c.data, "", "  ")
 	if err != nil {
 		return err
@@ -72,8 +65,9 @@ func (c *Cache) Save() error {
 }
 
 // GetImage retrieves a cached image lookup
+// Returns false if skipReads is enabled (forces fresh lookup)
 func (c *Cache) GetImage(key string) (string, []string, bool) {
-	if c.disabled {
+	if c.skipReads {
 		return "", nil, false
 	}
 
@@ -91,10 +85,6 @@ func (c *Cache) GetImage(key string) (string, []string, bool) {
 
 // SetImage stores an image lookup in the cache
 func (c *Cache) SetImage(key, latest string, allTags []string) {
-	if c.disabled {
-		return
-	}
-
 	c.data.Images[key] = CacheEntry{
 		Latest:    latest,
 		CheckedAt: time.Now(),
@@ -103,8 +93,9 @@ func (c *Cache) SetImage(key, latest string, allTags []string) {
 }
 
 // GetChart retrieves a cached chart lookup
+// Returns false if skipReads is enabled (forces fresh lookup)
 func (c *Cache) GetChart(key string) (string, bool) {
-	if c.disabled {
+	if c.skipReads {
 		return "", false
 	}
 
@@ -122,10 +113,6 @@ func (c *Cache) GetChart(key string) (string, bool) {
 
 // SetChart stores a chart lookup in the cache
 func (c *Cache) SetChart(key, latest string) {
-	if c.disabled {
-		return
-	}
-
 	c.data.Charts[key] = CacheEntry{
 		Latest:    latest,
 		CheckedAt: time.Now(),

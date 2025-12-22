@@ -130,7 +130,7 @@ func TestCache_TTLExpiry(t *testing.T) {
 	}
 }
 
-func TestCache_Disabled(t *testing.T) {
+func TestCache_SkipReads(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "chartup-cache-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -139,24 +139,38 @@ func TestCache_Disabled(t *testing.T) {
 
 	cacheFile := filepath.Join(tmpDir, "test-cache.json")
 
-	// Create disabled cache
+	// Create cache with skipReads enabled (like --no-cache flag)
 	c := New(cacheFile, 1*time.Hour, true)
 	c.SetImage("docker.io/nginx", "1.21.0", nil)
 
-	// Should not find anything when disabled
+	// Should not find anything when skipReads is true (forces fresh lookup)
 	_, _, ok := c.GetImage("docker.io/nginx")
 	if ok {
-		t.Error("expected disabled cache to not return values")
+		t.Error("expected skipReads cache to not return values on read")
 	}
 
-	// Save should be a no-op
+	// Save should still work (to update cache with fresh data)
 	if err := c.Save(); err != nil {
-		t.Errorf("Save() on disabled cache error = %v", err)
+		t.Errorf("Save() error = %v", err)
 	}
 
-	// Cache file should not exist
-	if _, err := os.Stat(cacheFile); !os.IsNotExist(err) {
-		t.Error("expected cache file to not exist when disabled")
+	// Cache file SHOULD exist (writes still happen)
+	if _, err := os.Stat(cacheFile); os.IsNotExist(err) {
+		t.Error("expected cache file to exist even with skipReads")
+	}
+
+	// New cache instance without skipReads should find the saved data
+	c2 := New(cacheFile, 1*time.Hour, false)
+	if err := c2.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	latest, _, ok := c2.GetImage("docker.io/nginx")
+	if !ok {
+		t.Error("expected to find cached image after skipReads save")
+	}
+	if latest != "1.21.0" {
+		t.Errorf("Latest = %q, want %q", latest, "1.21.0")
 	}
 }
 

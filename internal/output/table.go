@@ -18,6 +18,9 @@ var baseDir string
 // editorScheme determines how file links are formatted
 var editorScheme = ""
 
+// verbose controls whether to show all items or only updates
+var verbose = false
+
 // SetBaseDir sets the base directory for relative path display
 func SetBaseDir(dir string) {
 	baseDir = dir
@@ -27,6 +30,11 @@ func SetBaseDir(dir string) {
 // Supported: "vscode", "idea", "sublime", "cursor", "zed", "none", or empty for auto-detect
 func SetEditor(editor string) {
 	editorScheme = editor
+}
+
+// SetVerbose sets whether to show all items or only updates
+func SetVerbose(v bool) {
+	verbose = v
 }
 
 // detectEditor tries to determine the editor from environment variables
@@ -110,140 +118,178 @@ func chartsByFile(charts []checker.ChartResult) map[string][]checker.ChartResult
 }
 
 func printImagesTables(images []checker.ImageResult) {
-	fmt.Println("DOCKER IMAGES")
-	fmt.Println(strings.Repeat("═", 80))
-
 	if len(images) == 0 {
+		fmt.Println("DOCKER IMAGES")
+		fmt.Println(strings.Repeat("═", 80))
 		fmt.Println("No Docker images found.")
 		return
 	}
 
-	// Group by file
-	grouped := imagesByFile(images)
-
-	// Sort file paths
-	paths := make([]string, 0, len(grouped))
-	for path := range grouped {
-		paths = append(paths, path)
+	// Filter images if not verbose
+	filtered := images
+	if !verbose {
+		filtered = make([]checker.ImageResult, 0)
+		for _, img := range images {
+			if img.Status == checker.StatusUpdateAvailable {
+				filtered = append(filtered, img)
+			}
+		}
 	}
-	sort.Strings(paths)
 
-	for i, path := range paths {
-		if i > 0 {
-			fmt.Println()
+	// Count updates for header
+	updateCount := 0
+	for _, img := range images {
+		if img.Status == checker.StatusUpdateAvailable {
+			updateCount++
+		}
+	}
+
+	// Print header with count
+	if verbose {
+		fmt.Printf("DOCKER IMAGES - %d updates of %d total\n", updateCount, len(images))
+	} else {
+		fmt.Printf("DOCKER IMAGES - %d updates\n", updateCount)
+	}
+	fmt.Println(strings.Repeat("═", 80))
+
+	if len(filtered) == 0 {
+		fmt.Println("No updates available.")
+		return
+	}
+
+	// Sort by file path, then line number
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].Path != filtered[j].Path {
+			return filtered[i].Path < filtered[j].Path
+		}
+		return filtered[i].Line < filtered[j].Line
+	})
+
+	// Create single table
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+
+	if verbose {
+		t.AppendHeader(table.Row{"Location", "Image", "Current", "Latest", "Status"})
+	} else {
+		t.AppendHeader(table.Row{"Location", "Image", "Current", "Latest"})
+	}
+
+	for _, img := range filtered {
+		repo := img.Repository
+		if img.Registry != "docker.io" && img.Registry != "" {
+			repo = img.Registry + "/" + img.Repository
 		}
 
-		// Print file header with link
-		printFileHeader(path)
+		latest := img.Latest
+		if img.Skipped {
+			latest = "-"
+		}
 
-		// Sort images by line number
-		imgs := grouped[path]
-		sort.Slice(imgs, func(a, b int) bool {
-			return imgs[a].Line < imgs[b].Line
-		})
+		// Format location as relative/path:line with clickable link
+		location := formatLocationLink(img.Path, img.Line)
 
-		// Create table for this file
-		t := table.NewWriter()
-		t.SetOutputMirror(os.Stdout)
-
-		t.AppendHeader(table.Row{"Repository", "Current", "Latest", "Status", "Line"})
-
-		for _, img := range imgs {
-			repo := img.Repository
-			if img.Registry != "docker.io" && img.Registry != "" {
-				repo = img.Registry + "/" + img.Repository
-			}
-
-			latest := img.Latest
-			if img.Skipped {
-				latest = "-"
-			}
-
+		if verbose {
 			status := formatStatus(img.Status)
-			lineStr := formatLineLink(path, img.Line)
-
-			t.AppendRow(table.Row{repo, img.Current, latest, status, lineStr})
+			t.AppendRow(table.Row{location, repo, img.Current, latest, status})
+		} else {
+			t.AppendRow(table.Row{location, repo, img.Current, latest})
 		}
-
-		t.SetColumnConfigs([]table.ColumnConfig{
-			{Number: 1, WidthMax: 45, WidthMaxEnforcer: text.WrapSoft},
-			{Number: 2, WidthMax: 22, WidthMaxEnforcer: text.WrapSoft},
-			{Number: 3, WidthMax: 22, WidthMaxEnforcer: text.WrapSoft},
-			{Number: 4, Align: text.AlignCenter},
-			{Number: 5, Align: text.AlignRight},
-		})
-
-		t.SetStyle(table.StyleLight)
-		t.Render()
 	}
+
+	if verbose {
+		t.SetColumnConfigs([]table.ColumnConfig{
+			{Number: 5, Align: text.AlignCenter},
+		})
+	}
+
+	t.SetStyle(table.StyleLight)
+	t.Render()
 }
 
 func printChartsTables(charts []checker.ChartResult) {
-	fmt.Println("HELM CHARTS")
-	fmt.Println(strings.Repeat("═", 80))
-
 	if len(charts) == 0 {
+		fmt.Println("HELM CHARTS")
+		fmt.Println(strings.Repeat("═", 80))
 		fmt.Println("No Helm charts found.")
 		return
 	}
 
-	// Group by file
-	grouped := chartsByFile(charts)
-
-	// Sort file paths
-	paths := make([]string, 0, len(grouped))
-	for path := range grouped {
-		paths = append(paths, path)
+	// Filter charts if not verbose
+	filtered := charts
+	if !verbose {
+		filtered = make([]checker.ChartResult, 0)
+		for _, chart := range charts {
+			if chart.Status == checker.StatusUpdateAvailable {
+				filtered = append(filtered, chart)
+			}
+		}
 	}
-	sort.Strings(paths)
 
-	for i, path := range paths {
-		if i > 0 {
-			fmt.Println()
+	// Count updates for header
+	updateCount := 0
+	for _, chart := range charts {
+		if chart.Status == checker.StatusUpdateAvailable {
+			updateCount++
+		}
+	}
+
+	// Print header with count
+	if verbose {
+		fmt.Printf("HELM CHARTS - %d updates of %d total\n", updateCount, len(charts))
+	} else {
+		fmt.Printf("HELM CHARTS - %d updates\n", updateCount)
+	}
+	fmt.Println(strings.Repeat("═", 80))
+
+	if len(filtered) == 0 {
+		fmt.Println("No updates available.")
+		return
+	}
+
+	// Sort by file path, then line number
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].Path != filtered[j].Path {
+			return filtered[i].Path < filtered[j].Path
+		}
+		return filtered[i].Line < filtered[j].Line
+	})
+
+	// Create single table
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+
+	if verbose {
+		t.AppendHeader(table.Row{"Location", "Chart", "Current", "Latest", "Status"})
+	} else {
+		t.AppendHeader(table.Row{"Location", "Chart", "Current", "Latest"})
+	}
+
+	for _, chart := range filtered {
+		latest := chart.Latest
+		if chart.Status == checker.StatusSkipped {
+			latest = "-"
 		}
 
-		// Print file header with link
-		printFileHeader(path)
+		// Format location as relative/path:line with clickable link
+		location := formatLocationLink(chart.Path, chart.Line)
 
-		// Sort charts by line number
-		chts := grouped[path]
-		sort.Slice(chts, func(a, b int) bool {
-			return chts[a].Line < chts[b].Line
-		})
-
-		// Create table for this file
-		t := table.NewWriter()
-		t.SetOutputMirror(os.Stdout)
-
-		t.AppendHeader(table.Row{"Chart", "Upstream", "Current", "Latest", "Status"})
-
-		for _, chart := range chts {
-			upstream := chart.Upstream
-			if upstream == "" {
-				upstream = "(local)"
-			}
-
-			latest := chart.Latest
-			if chart.Status == checker.StatusSkipped {
-				latest = "-"
-			}
-
+		if verbose {
 			status := formatStatus(chart.Status)
-
-			t.AppendRow(table.Row{chart.Name, upstream, chart.Current, latest, status})
+			t.AppendRow(table.Row{location, chart.Name, chart.Current, latest, status})
+		} else {
+			t.AppendRow(table.Row{location, chart.Name, chart.Current, latest})
 		}
+	}
 
+	if verbose {
 		t.SetColumnConfigs([]table.ColumnConfig{
-			{Number: 1, WidthMax: 25},
-			{Number: 2, WidthMax: 15},
-			{Number: 3, WidthMax: 15},
-			{Number: 4, WidthMax: 15},
 			{Number: 5, Align: text.AlignCenter},
 		})
-
-		t.SetStyle(table.StyleLight)
-		t.Render()
 	}
+
+	t.SetStyle(table.StyleLight)
+	t.Render()
 }
 
 func printFileHeader(path string) {
@@ -277,6 +323,28 @@ func formatLineLink(path string, line int) string {
 	}
 
 	return lineStr
+}
+
+func formatLocationLink(path string, line int) string {
+	relPath := relativePath(path)
+
+	// Format as path:line
+	var location string
+	if line > 0 {
+		location = fmt.Sprintf("%s:%d", relPath, line)
+	} else {
+		location = relPath
+	}
+
+	// Create clickable link
+	scheme := getEditorScheme()
+	link := makeEditorLink(path, line)
+	if link != "" && scheme != "none" {
+		// OSC 8 hyperlink format
+		return fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", link, location)
+	}
+
+	return location
 }
 
 func makeEditorLink(path string, line int) string {
@@ -315,18 +383,26 @@ func makeEditorLink(path string, line int) string {
 	}
 }
 
+// ANSI color codes
+const (
+	colorReset  = "\033[0m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorGray   = "\033[90m"
+)
+
 func formatStatus(status checker.Status) string {
 	switch status {
 	case checker.StatusUpToDate:
-		return "✓ OK"
+		return colorGreen + "✓ OK" + colorReset
 	case checker.StatusUpdateAvailable:
-		return "⚠ UPDATE"
+		return colorYellow + "⚠ UPDATE" + colorReset
 	case checker.StatusSkipped:
-		return "⏭ SKIP"
+		return colorGray + "⏭ SKIP" + colorReset
 	case checker.StatusError:
-		return "✗ ERROR"
+		return colorGray + "✗ ERROR" + colorReset
 	default:
-		return "? UNKNOWN"
+		return colorGray + "? UNKNOWN" + colorReset
 	}
 }
 
@@ -359,7 +435,7 @@ func relativePath(path string) string {
 }
 
 func printSummary(results *checker.Results) {
-	var updates, upToDate, skipped, errors int
+	var updates, upToDate, skipped, errors, unknown int
 
 	for _, img := range results.Images {
 		switch img.Status {
@@ -371,6 +447,8 @@ func printSummary(results *checker.Results) {
 			skipped++
 		case checker.StatusError:
 			errors++
+		default:
+			unknown++
 		}
 	}
 
@@ -384,21 +462,37 @@ func printSummary(results *checker.Results) {
 			skipped++
 		case checker.StatusError:
 			errors++
+		default:
+			unknown++
 		}
 	}
+
+	total := updates + upToDate + skipped + errors + unknown
 
 	t := table.NewWriter()
 	t.SetOutputMirror(os.Stdout)
 	t.SetTitle("SUMMARY")
 
-	t.AppendRow(table.Row{"Updates available", updates})
-	t.AppendRow(table.Row{"Up to date", upToDate})
-	t.AppendRow(table.Row{"Skipped", skipped})
+	t.AppendRow(table.Row{"Updates available", colorYellow + fmt.Sprintf("%d", updates) + colorReset})
+	t.AppendRow(table.Row{"Up to date", colorGreen + fmt.Sprintf("%d", upToDate) + colorReset})
+	t.AppendRow(table.Row{"Skipped", colorGray + fmt.Sprintf("%d", skipped) + colorReset})
 	if errors > 0 {
-		t.AppendRow(table.Row{"Errors", errors})
+		t.AppendRow(table.Row{"Errors", colorGray + fmt.Sprintf("%d", errors) + colorReset})
 	}
+	if unknown > 0 {
+		t.AppendRow(table.Row{"Unknown", colorGray + fmt.Sprintf("%d", unknown) + colorReset})
+	}
+	t.AppendSeparator()
+	t.AppendRow(table.Row{"Total", fmt.Sprintf("%d", total)})
 
 	t.SetStyle(table.StyleRounded)
 	t.Style().Title.Align = text.AlignCenter
 	t.Render()
+
+	// Print hint about verbose mode
+	if verbose {
+		fmt.Printf("\n%sHint: Run without --verbose to show only updates%s\n", colorGray, colorReset)
+	} else {
+		fmt.Printf("\n%sHint: Run with --verbose to show all %d items%s\n", colorGray, total, colorReset)
+	}
 }

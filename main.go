@@ -22,8 +22,8 @@ Usage:
   chartup [options] [directory]
 
 Options:
-  --no-cache          Ignore cached results
-  --cache-ttl <dur>   Cache validity duration (default: 1h)
+  --verbose           Show all items (default: only updates)
+  --refresh           Refresh cache with fresh lookups
   --editor <name>     Editor for clickable links (default: auto-detect)
                       Options: vscode, cursor, idea, sublime, zed, none
   --version           Show version
@@ -32,8 +32,7 @@ Options:
 Examples:
   chartup .                      Scan current directory
   chartup /path/to/charts        Scan specific directory
-  chartup --no-cache .           Force fresh lookups
-  chartup --cache-ttl 24h .      Cache results for 24 hours
+  chartup --refresh .            Force fresh lookups and update cache
   chartup --editor idea .        Use IntelliJ IDEA for links
 
 Supported registries:
@@ -45,8 +44,8 @@ Supported registries:
 func main() {
 	flag.Usage = printUsage
 
-	noCache := flag.Bool("no-cache", false, "")
-	cacheTTL := flag.Duration("cache-ttl", 1*time.Hour, "")
+	verbose := flag.Bool("verbose", false, "")
+	refresh := flag.Bool("refresh", false, "")
 	editor := flag.String("editor", "", "")
 	showVersion := flag.Bool("version", false, "")
 	showHelp := flag.Bool("help", false, "")
@@ -79,8 +78,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize cache
-	c := cache.New(".chartup-cache.json", *cacheTTL, *noCache)
+	// Initialize cache (1 hour TTL)
+	c := cache.New(".chartup-cache.json", 1*time.Hour, *refresh)
 	if err := c.Load(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not load cache: %v\n", err)
 	}
@@ -104,7 +103,7 @@ func main() {
 	if err != nil {
 		if checker.IsRateLimitError(err) {
 			fmt.Fprintf(os.Stderr, "\nError: Rate limit hit. Partial results shown below.\n")
-			fmt.Fprintf(os.Stderr, "Try again later or use --cache-ttl to extend cache validity.\n\n")
+			fmt.Fprintf(os.Stderr, "Try again later. Cached results will be used for 1 hour.\n\n")
 		} else {
 			fmt.Fprintf(os.Stderr, "Error checking updates: %v\n", err)
 			os.Exit(1)
@@ -126,6 +125,9 @@ func main() {
 	if *editor != "" {
 		output.SetEditor(*editor)
 	}
+
+	// Set verbose mode
+	output.SetVerbose(*verbose)
 
 	// Output results
 	output.PrintTable(updateResults)

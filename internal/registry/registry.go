@@ -285,10 +285,10 @@ func findLatestTag(tags []string, currentTag string) string {
 	// Check if current tag has 'v' prefix
 	hasVPrefix := strings.HasPrefix(currentTag, "v")
 
-	// Filter tags that match the same pattern (v prefix or not)
+	// Filter tags that match the same pattern (v prefix or not) and exclude pre-releases
 	matchingTags := []string{}
 	for _, tag := range tags {
-		if semverRegex.MatchString(tag) {
+		if semverRegex.MatchString(tag) && !isPreRelease(tag) {
 			tagHasV := strings.HasPrefix(tag, "v")
 			if tagHasV == hasVPrefix {
 				matchingTags = append(matchingTags, tag)
@@ -305,14 +305,30 @@ func findLatestTag(tags []string, currentTag string) string {
 	return matchingTags[0]
 }
 
+// preReleaseSuffixes contains common pre-release version suffixes to filter out
+var preReleaseSuffixes = []string{
+	"-dev", "-alpha", "-beta", "-rc", "-RC",
+	"-snapshot", "-SNAPSHOT", "-nightly",
+	"-preview", "-pre", "-test", "-testing",
+	"-canary", "-edge", "-exp", "-experimental",
+}
+
+// isPreRelease checks if a tag contains a pre-release suffix
+func isPreRelease(tag string) bool {
+	tagLower := strings.ToLower(tag)
+	for _, suffix := range preReleaseSuffixes {
+		if strings.Contains(tagLower, strings.ToLower(suffix)) {
+			return true
+		}
+	}
+	return false
+}
+
 func filterSemverTags(tags []string) []string {
 	result := []string{}
 	for _, tag := range tags {
-		if semverRegex.MatchString(tag) {
-			// Skip tags with extra suffixes like -rc, -alpha, -beta unless simple
-			if !strings.Contains(tag, "-") || isSimpleVersion(tag) {
-				result = append(result, tag)
-			}
+		if semverRegex.MatchString(tag) && !isPreRelease(tag) {
+			result = append(result, tag)
 		}
 	}
 	return result

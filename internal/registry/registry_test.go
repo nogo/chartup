@@ -42,10 +42,10 @@ func TestFindLatestTag(t *testing.T) {
 			want:       "1.2.0",
 		},
 		{
-			name:       "mixed tags with rc/alpha",
+			name:       "mixed tags with rc/alpha - filters pre-release",
 			tags:       []string{"1.0.0", "1.1.0", "1.2.0-rc1", "1.2.0-alpha", "1.1.5"},
 			currentTag: "1.0.0",
-			want:       "1.2.0-rc1", // Current impl doesn't filter rc tags from semver matching
+			want:       "1.1.5", // Pre-release versions (rc, alpha, beta, dev) are filtered out
 		},
 		{
 			name:       "empty tags list",
