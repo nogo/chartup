@@ -1,8 +1,10 @@
 package scanner
 
 import (
+	"bufio"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -87,6 +89,19 @@ func Scan(root string) (*ScanResults, error) {
 		// Parse values.yaml files for images
 		if filename == "values.yaml" {
 			images, err := parseValuesYAML(path)
+			if err == nil {
+				for _, img := range images {
+					if !seenImages[img.FullImage] {
+						seenImages[img.FullImage] = true
+						results.Images = append(results.Images, img)
+					}
+				}
+			}
+		}
+
+		// Parse Dockerfiles for images
+		if isDockerfile(filename) {
+			images, err := parseDockerfile(path)
 			if err == nil {
 				for _, img := range images {
 					if !seenImages[img.FullImage] {
@@ -291,4 +306,139 @@ func parseImageString(imageStr, path string, line int) *ImageInfo {
 	}
 
 	return img
+}
+
+// isDockerfile checks if a filename is a Dockerfile
+// Matches: Dockerfile, *.dockerfile, Dockerfile.*
+func isDockerfile(filename string) bool {
+	lower := strings.ToLower(filename)
+
+	// Exact match: Dockerfile (case-insensitive)
+	if lower == "dockerfile" {
+		return true
+	}
+
+	// Pattern: *.dockerfile (e.g., app.dockerfile)
+	if strings.HasSuffix(lower, ".dockerfile") {
+		return true
+	}
+
+	// Pattern: Dockerfile.* (e.g., Dockerfile.prod, Dockerfile.dev)
+	if strings.HasPrefix(lower, "dockerfile.") {
+		return true
+	}
+
+	return false
+}
+
+// parseDockerfile extracts images from FROM instructions in a Dockerfile
+func parseDockerfile(path string) ([]ImageInfo, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var images []ImageInfo
+	args := make(map[string]string)    // ARG name -> default value
+	aliases := make(map[string]bool)   // Stage aliases (FROM ... AS name)
+
+	// Regex patterns
+	argPattern := regexp.MustCompile(`^\s*ARG\s+(\w+)(?:=(.*))?$`)
+	fromPattern := regexp.MustCompile(`^\s*FROM\s+(\S+)(?:\s+AS\s+(\w+))?`)
+	varPattern := regexp.MustCompile(`\$\{?(\w+)(?::-([^}]*))?\}?`)
+
+	scanner := bufio.NewScanner(file)
+	lineNum := 0
+
+	for scanner.Scan() {
+		lineNum++
+		line := strings.TrimSpace(scanner.Text())
+
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Parse ARG instructions
+		if matches := argPattern.FindStringSubmatch(line); matches != nil {
+			argName := matches[1]
+			argValue := ""
+			if len(matches) > 2 {
+				argValue = strings.TrimSpace(matches[2])
+				// Remove surrounding quotes if present
+				argValue = strings.Trim(argValue, `"'`)
+			}
+			if argValue != "" {
+				args[argName] = argValue
+			}
+			continue
+		}
+
+		// Parse FROM instructions
+		if matches := fromPattern.FindStringSubmatch(line); matches != nil {
+			imageRef := matches[1]
+
+			// Track stage alias if present (FROM ... AS name)
+			if len(matches) > 2 && matches[2] != "" {
+				aliases[strings.ToLower(matches[2])] = true
+			}
+
+			// Resolve variables in the image reference
+			resolved := resolveDockerfileVars(imageRef, args, varPattern)
+
+			// Skip if unresolved (still contains $)
+			if strings.Contains(resolved, "$") {
+				continue
+			}
+
+			// Skip scratch
+			if strings.ToLower(resolved) == "scratch" {
+				continue
+			}
+
+			// Skip stage aliases
+			if aliases[strings.ToLower(resolved)] {
+				continue
+			}
+
+			// Parse and add the image
+			img := parseImageString(resolved, path, lineNum)
+			if img != nil {
+				images = append(images, *img)
+			}
+		}
+	}
+
+	return images, scanner.Err()
+}
+
+// resolveDockerfileVars resolves variables in a Dockerfile image reference
+// Supports: $VAR, ${VAR}, ${VAR:-default}
+func resolveDockerfileVars(imageRef string, args map[string]string, varPattern *regexp.Regexp) string {
+	return varPattern.ReplaceAllStringFunc(imageRef, func(match string) string {
+		submatches := varPattern.FindStringSubmatch(match)
+		if submatches == nil {
+			return match
+		}
+
+		varName := submatches[1]
+		defaultVal := ""
+		if len(submatches) > 2 {
+			defaultVal = submatches[2]
+		}
+
+		// Check if we have a value for this ARG
+		if val, ok := args[varName]; ok && val != "" {
+			return val
+		}
+
+		// Use default value if specified (${VAR:-default})
+		if defaultVal != "" {
+			return defaultVal
+		}
+
+		// Return original (unresolved)
+		return match
+	})
 }

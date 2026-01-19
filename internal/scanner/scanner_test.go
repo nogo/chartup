@@ -224,3 +224,307 @@ sidecar:
 		t.Error("nginx:1.21 image not found in results")
 	}
 }
+
+func TestIsDockerfile(t *testing.T) {
+	tests := []struct {
+		filename string
+		want     bool
+	}{
+		// Exact matches
+		{"Dockerfile", true},
+		{"dockerfile", true},
+		{"DOCKERFILE", true},
+
+		// Pattern: *.dockerfile
+		{"app.dockerfile", true},
+		{"build.Dockerfile", true},
+		{"my-service.DOCKERFILE", true},
+
+		// Pattern: Dockerfile.*
+		{"Dockerfile.prod", true},
+		{"Dockerfile.dev", true},
+		{"dockerfile.test", true},
+
+		// Non-matches
+		{"docker-compose.yml", false},
+		{"Dockerignore", false},
+		{"README.md", false},
+		{"values.yaml", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.filename, func(t *testing.T) {
+			got := isDockerfile(tt.filename)
+			if got != tt.want {
+				t.Errorf("isDockerfile(%q) = %v, want %v", tt.filename, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseDockerfile(t *testing.T) {
+	tests := []struct {
+		name       string
+		content    string
+		wantImages []struct {
+			repo string
+			tag  string
+			line int
+		}
+	}{
+		{
+			name:    "simple FROM",
+			content: "FROM nginx:1.25\n",
+			wantImages: []struct {
+				repo string
+				tag  string
+				line int
+			}{
+				{"nginx", "1.25", 1},
+			},
+		},
+		{
+			name: "multi-stage build",
+			content: `FROM golang:1.21 AS builder
+WORKDIR /app
+COPY . .
+RUN go build -o main .
+
+FROM alpine:3.19
+COPY --from=builder /app/main /main
+CMD ["/main"]
+`,
+			wantImages: []struct {
+				repo string
+				tag  string
+				line int
+			}{
+				{"golang", "1.21", 1},
+				{"alpine", "3.19", 6},
+			},
+		},
+		{
+			name: "skip alias reference",
+			content: `FROM golang:1.21 AS builder
+FROM builder AS test
+FROM alpine:3.19
+`,
+			wantImages: []struct {
+				repo string
+				tag  string
+				line int
+			}{
+				{"golang", "1.21", 1},
+				{"alpine", "3.19", 3},
+			},
+		},
+		{
+			name: "skip scratch",
+			content: `FROM golang:1.21 AS builder
+FROM scratch
+COPY --from=builder /app/main /main
+`,
+			wantImages: []struct {
+				repo string
+				tag  string
+				line int
+			}{
+				{"golang", "1.21", 1},
+			},
+		},
+		{
+			name: "ARG with default value",
+			content: `ARG BASE_IMAGE=nginx:1.25
+FROM $BASE_IMAGE
+`,
+			wantImages: []struct {
+				repo string
+				tag  string
+				line int
+			}{
+				{"nginx", "1.25", 2},
+			},
+		},
+		{
+			name: "ARG with braces",
+			content: `ARG VERSION=1.25
+FROM nginx:${VERSION}
+`,
+			wantImages: []struct {
+				repo string
+				tag  string
+				line int
+			}{
+				{"nginx", "1.25", 2},
+			},
+		},
+		{
+			name: "ARG with default fallback syntax",
+			content: `FROM ${BASE:-alpine:3.19}
+`,
+			wantImages: []struct {
+				repo string
+				tag  string
+				line int
+			}{
+				{"alpine", "3.19", 1},
+			},
+		},
+		{
+			name: "skip ARG without default",
+			content: `ARG BASE_IMAGE
+FROM $BASE_IMAGE
+FROM alpine:3.19
+`,
+			wantImages: []struct {
+				repo string
+				tag  string
+				line int
+			}{
+				{"alpine", "3.19", 3},
+			},
+		},
+		{
+			name: "with comments and empty lines",
+			content: `# Build stage
+FROM golang:1.21 AS builder
+
+# Runtime stage
+FROM alpine:3.19
+`,
+			wantImages: []struct {
+				repo string
+				tag  string
+				line int
+			}{
+				{"golang", "1.21", 2},
+				{"alpine", "3.19", 5},
+			},
+		},
+		{
+			name: "full registry URLs",
+			content: `FROM gcr.io/distroless/static:nonroot
+FROM ghcr.io/owner/repo:v1.0.0
+`,
+			wantImages: []struct {
+				repo string
+				tag  string
+				line int
+			}{
+				{"distroless/static", "nonroot", 1},
+				{"owner/repo", "v1.0.0", 2},
+			},
+		},
+		{
+			name: "quoted ARG value",
+			content: `ARG BASE="nginx:1.25"
+FROM $BASE
+`,
+			wantImages: []struct {
+				repo string
+				tag  string
+				line int
+			}{
+				{"nginx", "1.25", 2},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temp file
+			tmpFile, err := os.CreateTemp("", "Dockerfile-*")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.Remove(tmpFile.Name())
+
+			if _, err := tmpFile.WriteString(tt.content); err != nil {
+				t.Fatal(err)
+			}
+			tmpFile.Close()
+
+			images, err := parseDockerfile(tmpFile.Name())
+			if err != nil {
+				t.Fatalf("parseDockerfile() error = %v", err)
+			}
+
+			if len(images) != len(tt.wantImages) {
+				t.Errorf("got %d images, want %d", len(images), len(tt.wantImages))
+				for i, img := range images {
+					t.Logf("  [%d] %s:%s (line %d)", i, img.Repository, img.Tag, img.Line)
+				}
+				return
+			}
+
+			for i, want := range tt.wantImages {
+				got := images[i]
+				if got.Repository != want.repo {
+					t.Errorf("image[%d].Repository = %q, want %q", i, got.Repository, want.repo)
+				}
+				if got.Tag != want.tag {
+					t.Errorf("image[%d].Tag = %q, want %q", i, got.Tag, want.tag)
+				}
+				if got.Line != want.line {
+					t.Errorf("image[%d].Line = %d, want %d", i, got.Line, want.line)
+				}
+			}
+		})
+	}
+}
+
+func TestScanWithDockerfile(t *testing.T) {
+	// Create temp directory
+	tmpDir, err := os.MkdirTemp("", "chartup-dockerfile-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create test Dockerfiles
+	dockerfile1 := `FROM golang:1.21 AS builder
+FROM alpine:3.19
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "Dockerfile"), []byte(dockerfile1), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dockerfile2 := `FROM nginx:1.25
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "Dockerfile.prod"), []byte(dockerfile2), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dockerfile3 := `FROM python:3.12
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "app.dockerfile"), []byte(dockerfile3), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run scan
+	results, err := Scan(tmpDir)
+	if err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+
+	// Should find 4 unique images
+	expectedImages := map[string]bool{
+		"golang:1.21":  false,
+		"alpine:3.19":  false,
+		"nginx:1.25":   false,
+		"python:3.12":  false,
+	}
+
+	for _, img := range results.Images {
+		key := img.Repository + ":" + img.Tag
+		if _, exists := expectedImages[key]; exists {
+			expectedImages[key] = true
+		}
+	}
+
+	for img, found := range expectedImages {
+		if !found {
+			t.Errorf("expected image %s not found", img)
+		}
+	}
+}
