@@ -4,7 +4,8 @@ CLI tool to check Helm charts and Docker images for version updates.
 
 ## Features
 
-- Scans directories for `Chart.yaml` and `values.yaml` files
+- Scans directories for `Chart.yaml`, `values.yaml`, and Dockerfiles
+- Extracts images from Dockerfiles (`FROM` instructions with ARG variable resolution)
 - Checks Docker registries for newer image tags (Docker Hub, Quay.io, ghcr.io, gcr.io, registry.k8s.io)
 - Checks ArtifactHub for Helm chart updates (Bitnami, Trino)
 - Filters out pre-release versions (-dev, -alpha, -beta, -rc, etc.)
@@ -77,6 +78,20 @@ The `--editor` flag configures clickable links in terminal output. If not set, a
 | ghcr.io | GitHub Container Registry |
 | gcr.io | Google Container Registry |
 | registry.k8s.io | Kubernetes images |
+
+## Dockerfile Scanning
+
+Scans Dockerfiles for `FROM` instructions and extracts base images.
+
+**Supported filenames:**
+- `Dockerfile`
+- `*.dockerfile` (e.g., `app.dockerfile`)
+- `Dockerfile.*` (e.g., `Dockerfile.prod`)
+
+**Features:**
+- Multi-stage builds (all `FROM` instructions)
+- ARG variable resolution (`$VAR`, `${VAR}`, `${VAR:-default}`)
+- Skips `scratch`, stage aliases, and unresolvable variables
 
 ## Example Output
 

@@ -84,8 +84,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Warning: could not load cache: %v\n", err)
 	}
 
-	// Scan directory for charts
-	fmt.Printf("Scanning %s for Helm charts...\n\n", dir)
+	// Scan directory for charts and images
+	fmt.Printf("Scanning %s for Helm charts and Docker images...\n\n", dir)
 	results, err := scanner.Scan(dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error scanning directory: %v\n", err)
